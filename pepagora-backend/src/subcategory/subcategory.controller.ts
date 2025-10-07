@@ -57,6 +57,11 @@ async getSubcategories(@Query('categories') categories: string) {
   return this.subcategoryService.findByCategories(categoryIds);
 }
 
+@Get('by-category/:categoryId')
+async getSubcategoriesByCategory(@Param('categoryId') categoryId: string) {
+  return this.subcategoryService.findByCategories([categoryId]);
+}
+
 
 
   

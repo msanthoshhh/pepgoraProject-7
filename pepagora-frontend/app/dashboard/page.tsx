@@ -5,6 +5,9 @@ import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { boolean } from 'zod';
 import axiosInstance from '../../lib/axiosInstance';
+import AddCategoryModal from '@/components/AddCategoryModal';
+import AddSubcategoryModal from '@/components/AddSubcategoryModal';
+import AddProductModal from '@/components/AddProductModal';
 
 type Category = {
   _id: string;
@@ -40,13 +43,18 @@ type Dprops = {
 }
 
 export default function Dashboard() {
-
+  const [collapsed, setCollapsed] = useState(false);
   const [Loading,setLoading]=useState<boolean>(false)
   const [categories,setCategories]=useState<Category[]>([])
   const [subcategories,setSubcategories]=useState<Subategory[]>([])
   const [products,setProducts]=useState<Product[]>([])
   const [subCategoryCount, setSubCategoryCount] = useState<number>(0);
   const [productCount, setProductCount] = useState<number>(0);
+
+  // Modal states
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isSubcategoryModalOpen, setIsSubcategoryModalOpen] = useState(false);
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
 
   //   const logOut = () => {
 
@@ -148,8 +156,8 @@ const fetch = async () => {
   const productsCount = productCount;
   return (
     <>
-      <Sidebar />
-      <div className="ml-64 min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <div className={`transition-all duration-300 ${collapsed ? 'ml-20' : 'ml-80'} min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100`}>
         {/* Header */}
         <div className="bg-white shadow-sm border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -255,7 +263,10 @@ const fetch = async () => {
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <button className="flex items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors duration-200">
+              <button 
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="flex items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors duration-200"
+              >
                 <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3">
                   <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -264,7 +275,10 @@ const fetch = async () => {
                 <span className="text-sm font-medium text-gray-700">Add Category</span>
               </button>
               
-              <button className="flex items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-200">
+              <button 
+                onClick={() => setIsSubcategoryModalOpen(true)}
+                className="flex items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-200"
+              >
                 <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center mr-3">
                   <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -273,7 +287,10 @@ const fetch = async () => {
                 <span className="text-sm font-medium text-gray-700">Add Subcategory</span>
               </button>
               
-              <button className="flex items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors duration-200">
+              <button 
+                onClick={() => setIsProductModalOpen(true)}
+                className="flex items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors duration-200"
+              >
                 <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center mr-3">
                   <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -292,145 +309,36 @@ const fetch = async () => {
               </button>
             </div>
           </div>
+
+          {/* Modal Components */}
+          <AddCategoryModal 
+            isOpen={isCategoryModalOpen} 
+            onClose={() => setIsCategoryModalOpen(false)} 
+            onSuccess={() => {
+              fetch(); // Refresh data
+              setIsCategoryModalOpen(false);
+            }} 
+          />
+          
+          <AddSubcategoryModal 
+            isOpen={isSubcategoryModalOpen} 
+            onClose={() => setIsSubcategoryModalOpen(false)} 
+            onSuccess={() => {
+              fetch(); // Refresh data
+              setIsSubcategoryModalOpen(false);
+            }} 
+          />
+          
+          <AddProductModal 
+            isOpen={isProductModalOpen} 
+            onClose={() => setIsProductModalOpen(false)} 
+            onSuccess={() => {
+              fetch(); // Refresh data
+              setIsProductModalOpen(false);
+            }} 
+          />
         </div>
       </div>
     </>
   );
 }
-
-// 'use client';
-
-// import { useEffect, useState } from 'react';
-// import Sidebar from '@/components/Sidebar';
-// import axiosInstance from '../../lib/axiosInstance';
-
-// type Category = { _id: string; main_cat_name: string; metaTitle?: string; metaKeyword?: string; metaDescription?: string; imageUrl?: string; metaChildren?: string[] };
-// type Subategory = { _id: string; sub_cat_name: string; metaTitle?: string; metaKeyword?: string; metaDescription?: string; sub_cat_img_url?: string; mappedParent: string; metaChildren?: string[] };
-// type Product = { _id: string; name: string; metaTitle?: string; metaKeyword?: string; metaDescription?: string; imageUrl?: string; mappedParent: string };
-
-// export default function Dashboard() {
-//   const [Loading, setLoading] = useState<boolean>(false);
-//   const [categories, setCategories] = useState<Category[]>([]);
-//   const [subcategories, setSubcategories] = useState<Subategory[]>([]);
-//   const [products, setProducts] = useState<Product[]>([]);
-//   const [subCategoryCount, setSubCategoryCount] = useState<number>(0);
-//   const [productCount, setProductCount] = useState<number>(0);
-//   const [name, setName] = useState<string | null>(null);
-
-//   // ✅ Only access localStorage on client
-//   useEffect(() => {
-//     if (typeof window !== "undefined") {
-//       setName(localStorage.getItem("userName"));
-//     }
-//   }, []);
-
-//   const fetch = async () => {
-//     setLoading(true);
-//     try {
-//       const res = await axiosInstance.get('/categories');
-//       setCategories(Array.isArray(res.data.data.data) ? res.data.data.data : []);
-//     } catch {
-//       setCategories([]);
-//     }
-
-//     try {
-//       const res = await axiosInstance.get('/subcategories');
-//       setSubcategories(Array.isArray(res.data.data.data) ? res.data.data.data : []);
-//     } catch {
-//       setSubcategories([]);
-//     }
-
-//     try {
-//       const res = await axiosInstance.get('/products');
-//       setProducts(Array.isArray(res.data.data.data) ? res.data.data.data : []);
-//     } catch {
-//       setProducts([]);
-//     }
-
-//     try {
-//       const res = await axiosInstance.get('/subcategories/count');
-//       setSubCategoryCount(res.data.data.count ?? 0);
-//     } catch {
-//       setSubCategoryCount(0);
-//     }
-
-//     try {
-//       const res = await axiosInstance.get('/products/count');
-//       setProductCount(res.data.data.count ?? 0);
-//     } catch {
-//       setProductCount(0);
-//     }
-
-//     setLoading(false);
-//   };
-
-//   useEffect(() => {
-//     fetch();
-//   }, []);
-
-//   const categoriesCount = categories.length;
-
-//   return (
-//     <>
-//       <Sidebar />
-//       <div className="ml-64 min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
-//         {/* Header */}
-//         <div className="bg-white shadow-sm border-b border-gray-200">
-//           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-//             <div className="flex justify-between items-center py-6">
-//               <div>
-//                 <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-//                 <p className="mt-1 text-sm text-gray-600">
-//                   Welcome back, {name ?? "Guest"}!
-//                 </p>
-//               </div>
-//               <div className="flex items-center space-x-4">
-//                 <img src="/pepagora-logo-red.png" alt="Pepagora Logo" className="h-12 w-auto" />
-//               </div>
-//             </div>
-//           </div>
-//         </div>
-
-//         {/* Main Content */}
-//         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-//           {/* Stats Grid */}
-//           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-//             {/* Categories Card */}
-//             <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-xl transition-shadow duration-300">
-//               <div className="p-6">
-//                 <div className="flex items-center">
-//                   <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-//                     <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-//                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14-7H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2z" />
-//                     </svg>
-//                   </div>
-//                   <div className="ml-4 flex-1">
-//                     <p className="text-sm font-medium text-gray-600">Total Categories</p>
-//                     <p className="text-3xl font-bold text-gray-900">{categoriesCount}</p>
-//                   </div>
-//                 </div>
-//               </div>
-//             </div>
-
-//             {/* Subcategories Card */}
-//             <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-xl transition-shadow duration-300">
-//               <div className="p-6">
-//                 <p className="text-sm font-medium text-gray-600">Sub Categories</p>
-//                 <p className="text-3xl font-bold text-gray-900">{subCategoryCount}</p>
-//               </div>
-//             </div>
-
-//             {/* Products Card */}
-//             <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-xl transition-shadow duration-300">
-//               <div className="p-6">
-//                 <p className="text-sm font-medium text-gray-600">Total Products</p>
-//                 <p className="text-3xl font-bold text-gray-900">{productCount}</p>
-//               </div>
-//             </div>
-//           </div>
-//         </div>
-//       </div>
-//     </>
-//   );
-// }
-

@@ -117,6 +117,12 @@ async findAllCount() {
       };
 }
 
+@Get(':id')
+@Roles('admin', 'pepagora_manager', 'category_manager')
+findOne(@Param('id') id: string) {
+  return this.productService.findOne(id);
+}
+
 // @Get(':id')
 // findOne(@Param('id') id: string) {
 //   return this.productService.findOne(id);

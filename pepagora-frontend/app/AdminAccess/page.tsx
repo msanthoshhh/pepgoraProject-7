@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/components/hooks/useAuth';
 import SignupPage from '../signup/page';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserManagement from '@/components/UserManagement';
@@ -10,6 +10,7 @@ import UserManagement from '@/components/UserManagement';
 export default function AdminAccess() {
   const { userRole, loading } = useAuth();
   const router = useRouter();
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     if (!loading && userRole !== 'admin') {
@@ -21,12 +22,15 @@ export default function AdminAccess() {
   if (userRole !== 'admin') return null;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <Sidebar />
+    <div className="flex min-h-screen bg-gray-50">
+      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
       
-      <SignupPage />
-
-      {/* <UserManagement /> View, Update, Delete */}
+      <div className={`flex-1 transition-all duration-300 ${collapsed ? 'ml-20' : 'ml-80'}`}>
+        <div className="p-6 max-w-4xl mx-auto">
+          <SignupPage />
+          {/* <UserManagement /> View, Update, Delete */}
+        </div>
+      </div>
     </div>
   );
 }

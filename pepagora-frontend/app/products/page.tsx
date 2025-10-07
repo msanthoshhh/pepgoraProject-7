@@ -27,10 +27,10 @@ type Product = {
   description?: string;
   mappedParent?: {         // subcategory
     _id: string;
-    sub_cat_name: string;
+    name: string;
     mappedParent?: {      // category
       _id: string;
-      main_cat_name: string;
+      name: string;
     };
   };
 
@@ -38,7 +38,7 @@ type Product = {
 
 type Category = {
   _id: string;
-  main_cat_name: string;
+  name: string;
   metaTitle?: string;
   metaKeyword?: string;
   metaDescription?: string;
@@ -47,7 +47,7 @@ type Category = {
 }
 type Subcategory = {
   _id: string;
-  sub_cat_name: string;
+  name: string;
   mappedParent?: string;
 
 };
@@ -117,29 +117,32 @@ export default function ProductsPage() {
   const [formDescription, setFormDescription] = useState('');
 
   // DeepSeek AI loading state
-  const [aiLoadingField, setAiLoadingField] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
-  // DeepSeek AI handler
-  async function handleRewriteAI(field: 'metaTitle' | 'metaKeyword' | 'metaDescription' | 'description') {
-    setAiLoadingField(field);
+  // Helper to download response.txt
+  function downloadResponseTxt(content: string) {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'response.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // DeepSeek AI handler for full JSON
+  async function handleRewriteAllAI() {
+    if (!formName) {
+      toast.error('Please enter a product name first.');
+      return;
+    }
+    setAiLoading(true);
     try {
-      const apiKey = process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY || '';
-      const apiUrl = process.env.NEXT_PUBLIC_DEEPSEEK_URL || 'https://api.deepseek.com/v1/chat/completions';
-      let prompt = '';
-      switch (field) {
-        case 'metaTitle':
-          prompt = `Rewrite a professional SEO meta title for product: ${formName}`;
-          break;
-        case 'metaKeyword':
-          prompt = `Generate SEO meta keywords for product: ${formName}`;
-          break;
-        case 'metaDescription':
-          prompt = `Rewrite a professional SEO meta description for product: ${formName}`;
-          break;
-        case 'description':
-          prompt = `Rewrite a professional product description for: ${formName}`;
-          break;
-      }
+      const apiKey = process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY || 'sk-25f236c2be3a42d49914b903ff908670';
+      const apiUrl = process.env.NEXT_PUBLIC_DEEPSEEK_URL || 'https://api.deepseek.com/chat/completions';
+      const prompt = `USER: Create content for:\n- Page type: Product\n- Name: ${formName}\n- Markets: INDIA/GCC COUNTRIES/AFRICA\n- Trust signals: https://www.pepagora.com/en/s/trust\n- Languages: {LANGS}\n\nData sources (use in priority order):\nKeywords: {KEYWORDS_JSON}\n\nOUTPUT (return VALID JSON):\n{\n  "keywords": { "head": ["..."], "long_tail": ["..."], "variants": ["..."] },\n  "by_lang": {\n    "<lang>": {\n      "intro_html": "<h1>{PAGE_NAME}</h1><p>120-180 words covering what it is, key use-cases, core specs. Weave 2-3 head terms + long-tails naturally.</p>",\n      "faqs": [{"question": "?", "answer_html": "<p>2-3 sentences</p>"}], // 5-8 items\n      "llm_text": "50-70 words factual summary",\n      "meta": {"title": "≤60 chars", "description": "150-160 chars"},\n      "schema": {"faqpage_jsonld": {...}, "breadcrumb_jsonld": {...}, "itemlist_or_product_jsonld": {...}},\n      "links_html": "<nav aria-label=\"Related\">...</nav>"\n    }\n  }\n}\n\nRULES: Prefer supplied data. Weave keywords naturally. Clean HTML. Vendor-neutral. One H1 only.`;
       const res = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -148,19 +151,34 @@ export default function ProductsPage() {
         },
         body: JSON.stringify({
           model: 'deepseek-chat',
-          messages: [{ role: 'user', content: prompt }],
+          messages: [
+            { role: 'system', content: 'You are an expert B2B content strategist for Pepagora.com. Create SEO + LLM-optimized content for a Product page. Write concise, factual, globally readable copy. Use supplied data first; only generalize with industry knowledge if data is missing. Avoid unverified claims.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 2048
         }),
       });
       const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || '';
-      if (field === 'metaTitle') setFormMetaTitle(aiText);
-      if (field === 'metaKeyword') setFormMetaKeyword(aiText);
-      if (field === 'metaDescription') setFormMetaDescription(aiText);
-      if (field === 'description') setFormDescription(aiText);
+      const aiText = data.choices?.[0]?.message?.content?.trim() || '';
+      if (aiText) {
+        downloadResponseTxt(aiText);
+        try {
+          const json = JSON.parse(aiText);
+          setFormMetaTitle(json.by_lang?.['<lang>']?.meta?.title || '');
+          setFormMetaKeyword((json.keywords?.head || []).join(', '));
+          setFormMetaDescription(json.by_lang?.['<lang>']?.meta?.description || '');
+          setFormDescription(json.by_lang?.['<lang>']?.intro_html || '');
+          toast.success('Fields rewritten with AI!');
+        } catch (e) {
+          toast.error('AI response is not valid JSON.');
+        }
+      } else {
+        toast.error('AI did not return a result');
+      }
     } catch (err) {
       toast.error('AI rewrite failed');
     } finally {
-      setAiLoadingField(null);
+      setAiLoading(false);
     }
   }
 
@@ -285,6 +303,151 @@ useEffect(()=>{
     }
   };
 
+  // Generate meta data for all products missing meta info
+  const generateMissingMeta = async () => {
+    const productsNeedingMeta = products.filter(p => 
+      !p.metaTitle || !p.metaKeyword || !p.metaDescription
+    );
+
+    if (productsNeedingMeta.length === 0) {
+      toast.info('All products already have meta data!');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Generate meta data for ${productsNeedingMeta.length} products? This will use AI to create SEO-optimized content.`
+    );
+
+    if (!confirmed) return;
+
+    toast.info(`Starting bulk meta generation for ${productsNeedingMeta.length} products...`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const product of productsNeedingMeta) {
+      try {
+        await generateMetaForProduct(product);
+        successCount++;
+        // Add a small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } catch (error: any) {
+        errorCount++;
+        console.error(`Failed to generate meta for ${product.name}:`, error);
+      }
+    }
+
+    if (successCount > 0) {
+      toast.success(`✅ Generated meta data for ${successCount} products.`);
+    }
+    if (errorCount > 0) {
+      toast.warning(`⚠️ ${errorCount} products failed to generate meta data.`);
+    }
+    
+    fetchProducts(page); // Refresh the data
+  };
+
+  // Generate meta data for a specific product
+  const generateMetaForProduct = async (product: Product) => {
+    try {
+      const categoryName = product.mappedParent?.mappedParent?.name || '';
+      const subcategoryName = product.mappedParent?.name || '';
+      
+      const prompt = `Generate SEO meta data for this product:
+      Product Name: ${product.name}
+      Category: ${categoryName}
+      Subcategory: ${subcategoryName}
+      ${product.description ? `Description: ${product.description}` : ''}
+      
+      Please provide:
+      1. Meta Title (max 60 characters)
+      2. Meta Keywords (5-8 relevant keywords, comma-separated)
+      3. Meta Description (150-160 characters)
+      
+      Format your response as:
+      Meta Title: [title]
+      Meta Keywords: [keywords]
+      Meta Description: [description]`;
+
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer sk-25f236c2be3a42d49914b903ff908670',
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: 'You are an expert SEO content writer. Create compelling, search-optimized meta content for e-commerce products.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 512
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const aiText = data.choices?.[0]?.message?.content || '';
+      
+      if (!aiText) {
+        throw new Error('No content returned from AI');
+      }
+
+      // Parse the AI response
+      const metaTitleMatch = aiText.match(/Meta Title:\s*(.+)/i);
+      const metaKeywordMatch = aiText.match(/Meta Keywords:\s*(.+)/i);
+      const metaDescriptionMatch = aiText.match(/Meta Description:\s*(.+)/i);
+
+      if (!metaTitleMatch && !metaKeywordMatch && !metaDescriptionMatch) {
+        throw new Error('Could not parse AI response');
+      }
+
+      const updatedData: any = { 
+        name: product.name,
+        mappedParent: product.mappedParent?._id
+      };
+      
+      if (metaTitleMatch) updatedData.metaTitle = metaTitleMatch[1].trim();
+      if (metaKeywordMatch) updatedData.metaKeyword = metaKeywordMatch[1].trim();
+      if (metaDescriptionMatch) updatedData.metaDescription = metaDescriptionMatch[1].trim();
+
+      // Update the product with generated meta data
+      console.log('Updating product with data:', updatedData);
+      const updateResponse = await axiosInstance.patch(`/products/${product._id}`, updatedData);
+      
+      if (updateResponse.status !== 200) {
+        throw new Error(`Failed to update product: ${updateResponse.status}`);
+      }
+
+      toast.success(`Meta data generated for ${product.name}!`);
+      fetchProducts(page); // Refresh the data
+      
+    } catch (error: any) {
+      let errorMessage = 'Unknown error occurred';
+      
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        console.error('API Error Response:', error.response.data);
+        console.error('API Error Status:', error.response.status);
+        errorMessage = `API Error (${error.response.status}): ${error.response.data?.message || error.response.statusText}`;
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.error('Network Error:', error.request);
+        errorMessage = 'Network error - no response received';
+      } else {
+        // Something happened in setting up the request
+        console.error('Request Setup Error:', error.message);
+        errorMessage = error.message || 'Request setup error';
+      }
+      
+      toast.error(`Failed to generate meta data: ${errorMessage}`);
+      console.error('Full error object:', error);
+    }
+  };
+
 
 
   // effects
@@ -361,7 +524,7 @@ useEffect(()=>{
         description: formDescription || undefined,
       };
 
-      await axiosInstance.put(`/products/${editingId}`, payload);
+      await axiosInstance.patch(`/products/${editingId}`, payload);
 
       toast.success("Product updated successfully!");
       setShowEditModal(false);
@@ -421,41 +584,84 @@ useEffect(()=>{
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50">
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
 
-      <main className={collapsed ? "ml-20 p-6 md:p-8" : "ml-60 p-6 md:p-8"}>
-        <div className="mx-auto max-w-7xl space-y-6">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Products</h1>
-              <p className="text-gray-500 text-sm">Create, edit and manage products (matches Subcategories UI).</p>
-
+      <main className={`transition-all duration-300 ${collapsed ? "ml-20" : "ml-72"} p-6 md:p-8`}>
+        <div className="mx-auto max-w-7xl space-y-8">
+          {/* Enhanced Header */}
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-8">
+            <div className="flex items-center justify-between gap-6 flex-wrap">
+              <div className="space-y-2">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h1 className="text-3xl font-bold text-slate-900">Products</h1>
+                    <p className="text-slate-600 font-medium">Manage your product catalog with advanced features</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                {!isManagerViewOnly && (
+                  <>
+                    <button
+                      onClick={generateMissingMeta}
+                      disabled={loading}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold rounded-xl shadow-lg hover:shadow-purple-500/25 transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      🤖 Generate Missing Meta
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFormName(''); setFormMappedParent(null); setFormMetaTitle(''); setFormMetaKeyword(''); setFormMetaDescription(''); setFormImageUrl(''); setFormDescription('');
+                        setShowAddModal(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl shadow-lg hover:shadow-blue-500/25 transition-all duration-200 hover:scale-105"
+                    >
+                      <LuPlus className="w-5 h-5" />
+                      Add Product
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="flex gap-2">
-              {!isManagerViewOnly && (
-                <button
-                  onClick={() => {
-                    setFormName(''); setFormMappedParent(null); setFormMetaTitle(''); setFormMetaKeyword(''); setFormMetaDescription(''); setFormImageUrl(''); setFormDescription('');
-                    setShowAddModal(true);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-white shadow-sm hover:bg-blue-700"
-                >
-                  <LuPlus /> Add Product
-                </button>
+          </div>
 
-
-              )}
+          {/* Search and Filters */}
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 p-6">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex-1 max-w-md">
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Search products..."
+                    value={searchQuery}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400 transition-all duration-200"
+                  />
+                </div>
+              </div>
 
               <FilterSidebar
                 categories={categories.map(cat => ({
                   _id: cat._id,
-                  main_cat_name: cat.main_cat_name,
+                  main_cat_name: cat.name,
                   subcategories: subcategories
                     .filter(sub => sub.mappedParent === cat._id)
                     .map(sub => ({
                       _id: sub._id,
-                      name: sub.sub_cat_name,
+                      name: sub.name,
                     })),
                 }))}
                 selectedCategories={selectedCategories}
@@ -472,112 +678,182 @@ useEffect(()=>{
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="flex gap-3 flex-wrap">
-            <div className="rounded-2xl border bg-white shadow-sm p-4 min-w-[140px]">
-              <p className="text-xs text-gray-500">Total Products</p>
-              <p className="text-xl font-semibold text-gray-800">{totalItems}</p>
+          {/* Enhanced Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200/60 p-6 shadow-lg">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-blue-500 rounded-xl">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-blue-700">Total Products</p>
+                  <p className="text-2xl font-bold text-blue-900">{totalItems}</p>
+                </div>
+              </div>
             </div>
-            <div className="rounded-2xl border bg-white shadow-sm p-4 min-w-[140px]">
-              <p className="text-xs text-gray-500">Page</p>
-              <p className="text-xl font-semibold text-gray-800">{page} / {totalPages}</p>
+            
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl border border-green-200/60 p-6 shadow-lg">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-green-500 rounded-xl">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-green-700">Current Page</p>
+                  <p className="text-2xl font-bold text-green-900">{page} of {totalPages}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl border border-purple-200/60 p-6 shadow-lg">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-purple-500 rounded-xl">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-purple-700">With Meta Data</p>
+                  <p className="text-2xl font-bold text-purple-900">
+                    {products.filter(p => p.metaTitle && p.metaDescription).length}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Table */}
-          <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-            {/* Search */}
-            <div className="flex items-center justify-between p-3 border-b bg-gray-50">
-              <input
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="🔍 Search products..."
-                className="w-64 rounded-lg border px-3 py-1.5 text-sm"
-              />
-            </div>
-
+          {/* Modern Table */}
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/60 overflow-hidden">
             <div className="overflow-x-auto">
-
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-left text-xs uppercase text-gray-600">
+              <table className="w-full">
+                <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b border-slate-200">
                   <tr>
-                    <th className="p-3">S. NO</th>
-                    <th className="p-3">Image</th>
-                    <th>Category</th>
-                    <th>Subcategory</th>
-                    <th className="p-3">Product</th>
-                    <th className="p-3">Meta Title</th>
-                    <th className="p-3">Meta Keywords</th>
-                    <th className="p-3">Meta Description</th>
-                    {!isManagerViewOnly && <th className="p-3 text-center">Actions</th>}
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">S. NO</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Image</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Product</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Meta Title</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Meta Keywords</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Meta Description</th>
+                    {!isManagerViewOnly && <th className="px-6 py-4 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider">Actions</th>}
                   </tr>
                 </thead>
 
-                <tbody>
+                <tbody className="divide-y divide-slate-200">
                   {loading && Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)}
 
                   {!loading && products.length === 0 && (
                     <tr>
-                      <td colSpan={isManagerViewOnly ? 6 : 7} className="p-6 text-center text-gray-500">No products found.</td>
+                      <td colSpan={isManagerViewOnly ? 6 : 7} className="px-6 py-12 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <svg className="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                          </svg>
+                          <p className="text-slate-500 font-medium">No products found</p>
+                          <p className="text-slate-400 text-sm">Try adjusting your search or filters</p>
+                        </div>
+                      </td>
                     </tr>
                   )}
 
                   {!loading && products.map((prod, idx) => (
-                    <tr key={prod._id} className={`border-t hover:bg-blue-50/40 ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
-                      <td className="p-3 align-top">{(page - 1) * limit + idx + 1}</td>
-                      <td className="p-3 align-top">
+                    <tr key={prod._id} className="hover:bg-slate-50/50 transition-colors duration-200">
+                      <td className="px-6 py-4 text-sm font-medium text-slate-900">{(page - 1) * limit + idx + 1}</td>
+                      <td className="px-6 py-4">
                         {prod.imageUrl ? (
-                          <a href={prod.imageUrl} target="_blank" rel="noreferrer">
-                            <img src={prod.imageUrl} alt={prod.name} className="h-14 w-14 rounded-lg object-cover shadow-sm" />
+                          <a href={prod.imageUrl} target="_blank" rel="noreferrer" className="block">
+                            <img 
+                              src={prod.imageUrl} 
+                              alt={prod.name} 
+                              className="h-12 w-12 rounded-xl object-cover shadow-md border border-slate-200 hover:shadow-lg transition-all duration-200" 
+                            />
                           </a>
                         ) : (
-                          <MdImageNotSupported className="h-14 w-14 text-gray-300" />
+                          <div className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center">
+                            <MdImageNotSupported className="h-6 w-6 text-slate-400" />
+                          </div>
                         )}
                       </td>
-                      <td>{prod.mappedParent?.mappedParent?.main_cat_name || '-'}</td>
-                      <td>{prod.mappedParent?.sub_cat_name || '-'}</td>
-                      <td className="p-3 align-top font-medium text-gray-900">{prod.name}</td>
-                      <td className="p-3 align-top">
+                   
+                      <td className="px-6 py-4">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-slate-900">{prod.name}</p>
+                          {prod.mappedParent && (
+                            <p className="text-xs text-slate-500">
+                              {prod.mappedParent.mappedParent?.name} → {prod.mappedParent.name}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
                         {prod.metaTitle ? (
-                          <div
-                            className="max-h-12 min-h-[2.5rem] overflow-y-auto border border-blue-200 rounded-xl bg-gradient-to-br from-blue-50 to-white shadow-md p-2 text-xs text-blue-900 break-words transition-all duration-200 hover:shadow-lg hover:border-blue-400 focus-within:ring-2 focus-within:ring-blue-300"
-                            style={{ minWidth: '120px', maxWidth: '220px' }}
-                          >
-                            <span className="font-semibold text-blue-700">{prod.metaTitle}</span>
+                          <div className="max-w-xs">
+                            <div className="bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-3 text-xs text-blue-900 break-words meta-scrollable meta-title-scrollable">
+                              <span className="font-medium">{prod.metaTitle}</span>
+                            </div>
                           </div>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-500">
+                            No meta title
+                          </span>
                         )}
                       </td>
-                      <td className="p-3 align-top">
+                      <td className="px-6 py-4">
                         {prod.metaKeyword ? (
-                          <div
-                            className="max-h-12 min-h-[2.5rem] overflow-y-auto border border-purple-200 rounded-xl bg-gradient-to-br from-purple-50 to-white shadow-md p-2 text-xs text-purple-900 break-words transition-all duration-200 hover:shadow-lg hover:border-purple-400 focus-within:ring-2 focus-within:ring-purple-300"
-                            style={{ minWidth: '100px', maxWidth: '180px' }}
-                          >
-                            <span className="font-semibold text-purple-700">{prod.metaKeyword}</span>
+                          <div className="max-w-xs">
+                            <div className="bg-gradient-to-r from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-3 text-xs text-purple-900 break-words meta-scrollable meta-keywords-scrollable">
+                              <span className="font-medium">{prod.metaKeyword}</span>
+                            </div>
                           </div>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-500">
+                            No keywords
+                          </span>
                         )}
                       </td>
-                      <td className="p-3 align-top max-w-sm">
+                      <td className="px-6 py-4">
                         {prod.metaDescription ? (
-                          <div
-                            className="max-h-12 min-h-[2.5rem] overflow-y-auto border border-green-200 rounded-xl bg-gradient-to-br from-green-50 to-white shadow-md p-2 text-xs text-green-900 break-words transition-all duration-200 hover:shadow-lg hover:border-green-400 focus-within:ring-2 focus-within:ring-green-300"
-                            style={{ minWidth: '100px', maxWidth: '180px' }}
-                          >
-                            <span className="font-semibold text-green-700">{tooLong(prod.metaDescription) ? prod.metaDescription.slice(0, 120) + '...' : prod.metaDescription}</span>
+                          <div className="max-w-xs">
+                            <div className="bg-gradient-to-r from-green-50 to-green-100 border border-green-200 rounded-lg p-3 text-xs text-green-900 break-words meta-scrollable meta-description-scrollable">
+                              <span className="font-medium">{prod.metaDescription}</span>
+                            </div>
                           </div>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-500">
+                            No description
+                          </span>
                         )}
                       </td>
                       {!isManagerViewOnly && (
-                        <td className="p-3 align-top text-center">
-                          <div className="flex justify-center gap-2">
-                            <button onClick={() => startEdit(prod)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-white hover:bg-emerald-700"><TbEdit /> Edit</button>
-                            <button onClick={() => { setDeletingId(prod._id); setShowDeleteModal(true); }} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-white hover:bg-rose-700"><RiDeleteBin6Line /> Delete</button>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-center gap-2">
+                            <button 
+                              onClick={() => startEdit(prod)} 
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors duration-200"
+                            >
+                              <TbEdit className="w-4 h-4" />
+                              Edit
+                            </button>
+                            {(!prod.metaTitle || !prod.metaKeyword || !prod.metaDescription) && (
+                              <button
+                                onClick={() => generateMetaForProduct(prod)}
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors duration-200"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                🤖 AI Meta
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => { setDeletingId(prod._id); setShowDeleteModal(true); }} 
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors duration-200"
+                            >
+                              <RiDeleteBin6Line className="w-4 h-4" />
+                              Delete
+                            </button>
                           </div>
                         </td>
                       )}
@@ -614,97 +890,314 @@ useEffect(()=>{
 
       {/* ---------- Modals ---------- */}
       <AnimatePresence>
-        {/* Add Modal */}
+        {/* Enhanced Add Product Modal */}
         {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-              <h2 className="text-xl font-semibold mb-4">Add Product</h2>
-              <form onSubmit={handleCreate} className="space-y-4">
-                <input required value={formName} onChange={(e) => setFormName(e.target.value)} className="w-full rounded-lg border px-3 py-2" placeholder="Product Name" />
-                <select value={formMappedParent ?? ''} onChange={(e) => setFormMappedParent(e.target.value || null)} className="w-full rounded-lg border px-3 py-2">
-                  <option value="">-- Select Subcategory --</option>
-                  {subcategories.map(s => <option key={s._id} value={s._id}>{s.sub_cat_name}</option>)}
-                </select>
-                <div className="relative">
-                  <input value={formMetaTitle} onChange={(e) => setFormMetaTitle(e.target.value)} placeholder="Meta Title" className="w-full rounded-lg border px-3 py-2 pr-32" />
-                  <button type="button" onClick={() => handleRewriteAI('metaTitle')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaTitle'}>
-                    {aiLoadingField==='metaTitle' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                <div className="relative">
-                  <input value={formMetaKeyword} onChange={(e) => setFormMetaKeyword(e.target.value)} placeholder="Meta Keywords" className="w-full rounded-lg border px-3 py-2 pr-32" />
-                  <button type="button" onClick={() => handleRewriteAI('metaKeyword')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaKeyword'}>
-                    {aiLoadingField==='metaKeyword' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                <div className="relative">
-                  <textarea value={formMetaDescription} onChange={(e) => setFormMetaDescription(e.target.value)} placeholder="Meta Description" className="w-full rounded-lg border px-3 py-2 pr-32" rows={3} />
-                  <button type="button" onClick={() => handleRewriteAI('metaDescription')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaDescription'}>
-                    {aiLoadingField==='metaDescription' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                <input value={formImageUrl} onChange={(e) => setFormImageUrl(e.target.value)} placeholder="Image URL" className="w-full rounded-lg border px-3 py-2" />
-                <label className="block text-sm relative">
-                  <span className="block text-gray-700 mb-1">Description</span>
-                  <RichTextEditor value={formDescription} onChange={setFormDescription} />
-                  <button type="button" onClick={() => handleRewriteAI('description')} className="absolute right-2 top-0 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='description'}>
-                    {aiLoadingField==='description' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </label>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col mx-4">
+              {/* Enhanced Header */}
+              <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 rounded-t-2xl">
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg">
+                    <LuPlus className="w-5 h-5 text-white" />
+                  </div>
+                  Add New Product
+                </h2>
+                <button 
+                  onClick={() => setShowAddModal(false)} 
+                  className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors duration-200"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <button type="button" onClick={() => setShowAddModal(false)} className="rounded-lg border px-4 py-2">Cancel</button>
-                  <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Add</button>
-                </div>
-              </form>
+              {/* Scrollable Form Body */}
+              <div className="overflow-y-auto p-6 flex-1">
+                <form onSubmit={handleCreate} className="space-y-6">
+                  {/* Basic Information */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">Basic Information</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Product Name *</label>
+                        <input 
+                          required 
+                          value={formName} 
+                          onChange={(e) => setFormName(e.target.value)} 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                          placeholder="Enter product name" 
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Subcategory *</label>
+                        <select 
+                          value={formMappedParent ?? ''} 
+                          onChange={(e) => setFormMappedParent(e.target.value || null)} 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200"
+                          required
+                        >
+                          <option value="">-- Select Subcategory --</option>
+                          {subcategories.map(s => (
+                            <option key={s._id} value={s._id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Image URL</label>
+                      <input 
+                        value={formImageUrl} 
+                        onChange={(e) => setFormImageUrl(e.target.value)} 
+                        placeholder="https://example.com/image.jpg" 
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                      />
+                    </div>
+                  </div>
+
+                  {/* SEO Meta Information */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">SEO Meta Information</h3>
+                    
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Title</label>
+                      <div className="relative">
+                        <input 
+                          value={formMetaTitle} 
+                          onChange={(e) => setFormMetaTitle(e.target.value)} 
+                          placeholder="SEO-optimized title (max 60 characters)" 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                          maxLength={60}
+                        />
+                        <div className="absolute right-3 top-3 text-xs text-slate-500">
+                          {formMetaTitle.length}/60
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Keywords</label>
+                      <input 
+                        value={formMetaKeyword} 
+                        onChange={(e) => setFormMetaKeyword(e.target.value)} 
+                        placeholder="keyword1, keyword2, keyword3" 
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                      />
+                      <p className="text-xs text-slate-500">Separate keywords with commas</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Description</label>
+                      <div className="relative">
+                        <textarea 
+                          value={formMetaDescription} 
+                          onChange={(e) => setFormMetaDescription(e.target.value)} 
+                          placeholder="Compelling description for search engines (150-160 characters)" 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md resize-none" 
+                          rows={3}
+                          maxLength={160}
+                        />
+                        <div className="absolute right-3 bottom-3 text-xs text-slate-500">
+                          {formMetaDescription.length}/160
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Product Description */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">Product Description</h3>
+                    <div className="border border-slate-300 rounded-xl p-4 bg-slate-50/50">
+                      <RichTextEditor value={formDescription} onChange={setFormDescription} />
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-3 pt-6 border-t border-slate-200">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowAddModal(false)} 
+                      className="px-6 py-3 text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition-colors duration-200 font-medium"
+                    >
+                      Cancel
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={handleRewriteAllAI}
+                      className={`inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold rounded-xl shadow-lg transition-all duration-200 ${aiLoading ? 'opacity-60 cursor-not-allowed' : 'hover:scale-105'}`}
+                      disabled={aiLoading}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      {aiLoading ? 'Rewriting...' : '🤖 Rewrite All with AI'}
+                    </button>
+                    
+                    <button 
+                      type="submit" 
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-xl shadow-lg hover:scale-105 transition-all duration-200"
+                    >
+                      <LuPlus className="w-5 h-5" />
+                      Add Product
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Edit Modal */}
+        {/* Enhanced Edit Product Modal */}
         {showEditModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-              <h2 className="text-xl font-semibold mb-4">Edit Product</h2>
-              <form onSubmit={(e) => { e.preventDefault(); saveEdit(); }} className="space-y-4">
-                <input required value={formName} onChange={(e) => setFormName(e.target.value)} className="w-full rounded-lg border px-3 py-2" placeholder="Product Name" />
-                <select value={formMappedParent ?? ''} onChange={(e) => setFormMappedParent(e.target.value || null)} className="w-full rounded-lg border px-3 py-2">
-                  <option value="">-- Select Subcategory --</option>
-                  {subcategories.map(s => <option key={s._id} value={s._id}>{s.sub_cat_name}</option>)}
-                </select>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col mx-4">
+              {/* Enhanced Header */}
+              <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 rounded-t-2xl">
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg">
+                    <TbEdit className="w-5 h-5 text-white" />
+                  </div>
+                  Edit Product
+                </h2>
+                <button 
+                  onClick={() => { setShowEditModal(false); setEditingId(null); }} 
+                  className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors duration-200"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
-                <div className="relative">
-                  <input value={formMetaTitle} onChange={(e) => setFormMetaTitle(e.target.value)} placeholder="Meta Title" className="w-full rounded-lg border px-3 py-2 pr-32" />
-                  <button type="button" onClick={() => handleRewriteAI('metaTitle')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaTitle'}>
-                    {aiLoadingField==='metaTitle' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                <div className="relative">
-                  <input value={formMetaKeyword} onChange={(e) => setFormMetaKeyword(e.target.value)} placeholder="Meta Keywords" className="w-full rounded-lg border px-3 py-2 pr-32" />
-                  <button type="button" onClick={() => handleRewriteAI('metaKeyword')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaKeyword'}>
-                    {aiLoadingField==='metaKeyword' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                <div className="relative">
-                  <textarea value={formMetaDescription} onChange={(e) => setFormMetaDescription(e.target.value)} placeholder="Meta Description" className="w-full rounded-lg border px-3 py-2 pr-32" rows={3} />
-                  <button type="button" onClick={() => handleRewriteAI('metaDescription')} className="absolute right-2 top-2 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='metaDescription'}>
-                    {aiLoadingField==='metaDescription' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </div>
-                {/* <input value={formImageUrl} onChange={(e) => setFormImageUrl(e.target.value)} placeholder="Image URL" className="w-full rounded-lg border px-3 py-2" /> */}
-                <label className="block text-sm relative">
-                  <span className="block text-gray-700 mb-1">Description</span>
-                  <RichTextEditor value={formDescription} onChange={setFormDescription} />
-                  <button type="button" onClick={() => handleRewriteAI('description')} className="absolute right-2 top-0 bg-gray-100 text-xs px-3 py-1 rounded-lg border hover:bg-blue-100" disabled={aiLoadingField==='description'}>
-                    {aiLoadingField==='description' ? 'Rewriting...' : 'Rewrite with AI'}
-                  </button>
-                </label>
+              {/* Scrollable Form Body */}
+              <div className="overflow-y-auto p-6 flex-1">
+                <form onSubmit={(e) => { e.preventDefault(); saveEdit(); }} className="space-y-6">
+                  {/* Basic Information */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">Basic Information</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Product Name *</label>
+                        <input 
+                          required 
+                          value={formName} 
+                          onChange={(e) => setFormName(e.target.value)} 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                          placeholder="Enter product name" 
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Subcategory *</label>
+                        <select 
+                          value={formMappedParent ?? ''} 
+                          onChange={(e) => setFormMappedParent(e.target.value || null)} 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500 focus:border-transparent shadow-sm transition-all duration-200"
+                          required
+                        >
+                          <option value="">-- Select Subcategory --</option>
+                          {subcategories.map(s => (
+                            <option key={s._id} value={s._id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <button type="button" onClick={() => { setShowEditModal(false); setEditingId(null); }} className="rounded-lg border px-4 py-2">Cancel</button>
-                  <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700">Save</button>
-                </div>
-              </form>
+                  {/* SEO Meta Information */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">SEO Meta Information</h3>
+                    
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Title</label>
+                      <div className="relative">
+                        <input 
+                          value={formMetaTitle} 
+                          onChange={(e) => setFormMetaTitle(e.target.value)} 
+                          placeholder="SEO-optimized title (max 60 characters)" 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                          maxLength={60}
+                        />
+                        <div className="absolute right-3 top-3 text-xs text-slate-500">
+                          {formMetaTitle.length}/60
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Keywords</label>
+                      <input 
+                        value={formMetaKeyword} 
+                        onChange={(e) => setFormMetaKeyword(e.target.value)} 
+                        placeholder="keyword1, keyword2, keyword3" 
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md" 
+                      />
+                      <p className="text-xs text-slate-500">Separate keywords with commas</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-700">Meta Description</label>
+                      <div className="relative">
+                        <textarea 
+                          value={formMetaDescription} 
+                          onChange={(e) => setFormMetaDescription(e.target.value)} 
+                          placeholder="Compelling description for search engines (150-160 characters)" 
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:ring-2 focus:ring-emerald-500 focus:border-transparent shadow-sm transition-all duration-200 hover:shadow-md resize-none" 
+                          rows={3}
+                          maxLength={160}
+                        />
+                        <div className="absolute right-3 bottom-3 text-xs text-slate-500">
+                          {formMetaDescription.length}/160
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Product Description */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-200 pb-2">Product Description</h3>
+                    <div className="border border-slate-300 rounded-xl p-4 bg-slate-50/50">
+                      <RichTextEditor value={formDescription} onChange={setFormDescription} />
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-3 pt-6 border-t border-slate-200">
+                    <button 
+                      type="button" 
+                      onClick={() => { setShowEditModal(false); setEditingId(null); }} 
+                      className="px-6 py-3 text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition-colors duration-200 font-medium"
+                    >
+                      Cancel
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={handleRewriteAllAI}
+                      className={`inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold rounded-xl shadow-lg transition-all duration-200 ${aiLoading ? 'opacity-60 cursor-not-allowed' : 'hover:scale-105'}`}
+                      disabled={aiLoading}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      {aiLoading ? 'Rewriting...' : '🤖 Rewrite All with AI'}
+                    </button>
+                    
+                    <button 
+                      type="submit" 
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-semibold rounded-xl shadow-lg hover:scale-105 transition-all duration-200"
+                    >
+                      <TbEdit className="w-5 h-5" />
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         )}
